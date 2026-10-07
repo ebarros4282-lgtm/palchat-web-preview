@@ -58,6 +58,7 @@ jobs:
 
       - name: Keep this schedule enabled (weekly)
         if: github.event.schedule == '17 7 * * 1'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/keepalive-voice-server.yml/enable"
