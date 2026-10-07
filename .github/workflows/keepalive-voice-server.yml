@@ -1,0 +1,63 @@
+# Keeps the PalChat voice and ideas server (Render free tier) from sleeping.
+# Render spins a free web service down after about 15 minutes without traffic,
+# and the next request then waits 30 to 60 s. Children use AAC at any hour, so
+# this GETs /healthz about every 10 minutes, around the clock. /healthz only
+# returns {"ok":true}; it never calls ElevenLabs or Anthropic.
+#
+# It lives in this public repository because public repositories get standard
+# GitHub-hosted runners for free; about 4,400 runs a month would exceed the
+# free Actions minutes of a private repository.
+#
+# Caveats:
+# - GitHub can delay scheduled runs (more so near the top of the hour, hence
+#   the odd minutes), so the server may still sleep now and then; the next run
+#   wakes it.
+# - GitHub disables scheduled workflows in a public repository after 60 days
+#   without repository activity (and emails the owner first). Any push to this
+#   repository resets that. The weekly step below also re-enables the workflow
+#   through GitHub's documented API, which may help; if it does get disabled,
+#   re-enable it under Actions > "Keep voice server awake" > Enable workflow.
+# - Running 24/7 uses about 720 to 744 of the 750 free instance hours per
+#   month that Render shares across all free web services in a workspace.
+
+name: Keep voice server awake
+
+on:
+  schedule:
+    - cron: '4,14,24,34,44,54 * * * *'
+    - cron: '17 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: keepalive-voice-server
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: GET /healthz (with retries for a cold start)
+        env:
+          HEALTH_URL: https://aac-app-server.onrender.com/healthz
+        run: |
+          for attempt in 1 2 3 4; do
+            if result=$(curl -fsS --max-time 30 -o /dev/null -w '%{http_code} in %{time_total}s' "$HEALTH_URL"); then
+              echo "Healthy: HTTP $result (attempt $attempt)"
+              exit 0
+            fi
+            echo "Attempt $attempt failed; retrying in 15 s"
+            sleep 15
+          done
+          echo "::error::$HEALTH_URL did not answer after 4 attempts"
+          exit 1
+
+      - name: Keep this schedule enabled (weekly)
+        if: github.event.schedule == '17 7 * * 1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/keepalive-voice-server.yml/enable"
